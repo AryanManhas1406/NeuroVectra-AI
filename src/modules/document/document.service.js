@@ -1,166 +1,87 @@
-// const path =
-// require("path");
+const Document = require("./document.model");
+const extractTextFromPDF = require("../../utils/pdfParser");
+const chunkText = require("../../utils/chunkText");
+const createEmbedding = require("./embedding.service");
+const storeVectors = require("./vector.service");
 
-// const Document =
-// require("./document.model");
+const uploadDocumentService = async ({ file, userId }) => {
 
-// const extractTextFromPDF =
-// require("../../utils/pdfParser");
-
-// const uploadDocumentService =
-// async ({
-//     file,
-//     userId
-// }) => {
-
-//     if (!file) {
-
-//         throw new Error(
-//             "No file uploaded"
-//         );
-//     }
-
-//     const filePath =
-//     path.join(
-//         process.cwd(),
-//         "src/uploads",
-//         file.filename
-//     );
-
-//     const extractedText =
-//     await extractTextFromPDF(
-//         filePath
-//     );
-
-//     const document =
-//     await Document.create({
-
-//         user: userId,
-
-//         originalName:
-//         file.originalname,
-
-//         filePath,
-
-//         extractedText
-//     });
-
-//     return document;
-// };
-
-// module.exports = {
-//     uploadDocumentService
-// };
-// const path = require("path");          // ✅ added
-// const Document = require("./document.model");
-// const extractTextFromPDF = require("../../utils/pdfParser");
-
-// const uploadDocumentService = async ({ file, userId }) => {
-//     if (!file) {
-//         throw new Error("No file uploaded");
-//     }
-
-//     const filePath = path.join(
-//         process.cwd(),
-//         "uploads",
-//         file.filename          // ✅ fixed
-//     );
-
-//     const extractedText = await extractTextFromPDF(filePath);
-
-//     const document = await Document.create({
-//         user: userId,
-//         originalName: file.originalname,
-//         filePath: filePath,
-//         extractedText
-//     });
-
-//     return document;
-// };
-
-// module.exports = { uploadDocumentService };
-const Document =
-require("./document.model");
-
-const extractTextFromPDF =
-require("../../utils/pdfParser");
-
-const chunkText =
-require("../../utils/chunkText");
-
-const createEmbedding =
-require("./embedding.service");
-
-const storeVectors =
-require("./vector.service");
-
-const uploadDocumentService =
-async ({
-    file,
-    userId
-}) => {
-
+    // ✅ Guard: file must exist
     if (!file) {
+        throw new Error("No file uploaded");
+    }
 
+    // ── Step 1: Extract text from PDF ──────────────────────────────────────
+    console.log("[uploadDocumentService] Extracting text from:", file.path);
+    const extractedText = await extractTextFromPDF(file.path);
+
+    if (!extractedText || extractedText.trim().length === 0) {
         throw new Error(
-            "No file uploaded"
+            "PDF text extraction returned empty content. " +
+            "The PDF may be scanned/image-based or password-protected."
         );
     }
 
-    // Extract PDF text
-    const extractedText =
-    await extractTextFromPDF(
-        file.path
-    );
+    console.log(`[uploadDocumentService] Extracted ${extractedText.length} characters.`);
 
-    // Save document
-    const document =
-    await Document.create({
-
+    // ── Step 2: Save document to MongoDB ───────────────────────────────────
+    const document = await Document.create({
         user: userId,
-
-        originalName:
-        file.originalname,
-
-        filePath:
-        file.path,
-
+        originalName: file.originalname,
+        filePath: file.path,
         extractedText
     });
 
-    // Chunk text
-    const chunks =
-    chunkText(extractedText);
+    console.log("[uploadDocumentService] Document saved:", document._id.toString());
 
-    // Generate embeddings
-    const embeddings =
-    await Promise.all(
+    // ── Step 3: Chunk text ─────────────────────────────────────────────────
+    const chunks = chunkText(extractedText);
 
-        chunks.map(
+    console.log(`[uploadDocumentService] Chunks generated: ${chunks.length}`);
 
-            async (chunk) => {
+    if (!chunks || chunks.length === 0) {
+        throw new Error(
+            "chunkText returned no chunks. Check your chunk size and overlap settings."
+        );
+    }
 
-                return await createEmbedding(
-                    chunk
-                );
+    // ── Step 4: Generate embeddings ────────────────────────────────────────
+    console.log("[uploadDocumentService] Generating embeddings...");
+
+    const embeddings = await Promise.all(
+        chunks.map(async (chunk, i) => {
+            const embedding = await createEmbedding(chunk);
+
+            // ✅ Validate each embedding right after creation
+            if (!embedding) {
+                throw new Error(`createEmbedding returned null/undefined for chunk ${i}`);
             }
-        )
+
+            // Normalize in place so downstream code gets a plain array
+            if (Array.isArray(embedding)) return embedding;
+            if (Array.isArray(embedding.values)) return embedding.values;
+            if (Array.isArray(embedding.embedding)) return embedding.embedding;
+
+            throw new Error(
+                `createEmbedding returned an unexpected shape for chunk ${i}: ` +
+                JSON.stringify(embedding)?.slice(0, 150)
+            );
+        })
     );
 
-    // Store vectors
+    console.log(`[uploadDocumentService] Embeddings generated: ${embeddings.length}`);
+    console.log(`[uploadDocumentService] Embedding dimension: ${embeddings[0]?.length}`);
+
+    // ── Step 5: Store vectors in Pinecone ──────────────────────────────────
     await storeVectors({
-
         chunks,
-
         embeddings,
-
-        documentId:
-        document._id.toString()
+        documentId: document._id.toString()
     });
+
+    console.log("[uploadDocumentService] ✅ Upload complete for document:", document._id);
 
     return document;
 };
 
-module.exports = {
-    uploadDocumentService
-};
+module.exports = { uploadDocumentService };

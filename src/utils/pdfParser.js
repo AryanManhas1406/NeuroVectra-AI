@@ -1,60 +1,38 @@
-const fs = require("fs");
+/**
+ * pdfParser.js — extracts plain text from a PDF file path
+ *
+ * Requires pdf-parse v1.x  →  npm install pdf-parse@1.1.1
+ */
 
-const pdfjsLib =
-require("pdfjs-dist/legacy/build/pdf.mjs");
+const fs       = require("fs");
+const pdfParse = require("pdf-parse"); // v1.x exports a plain function
 
-const extractTextFromPDF =
-async (filePath) => {
+/**
+ * @param {string} filePath  - absolute or relative path to the PDF
+ * @returns {Promise<string>} - extracted plain text
+ */
+const extractTextFromPDF = async (filePath) => {
 
-    try {
+    if (!fs.existsSync(filePath)) {
+        throw new Error(`extractTextFromPDF: file not found at path "${filePath}"`);
+    }
 
-        const data =
-        new Uint8Array(
-            fs.readFileSync(filePath)
-        );
+    const buffer = fs.readFileSync(filePath);
+    const data   = await pdfParse(buffer);
+    const text   = data?.text?.trim() ?? "";
 
-        const pdf =
-        await pdfjsLib
-        .getDocument({ data })
-        .promise;
-
-        let text = "";
-
-        for (
-            let i = 1;
-            i <= pdf.numPages;
-            i++
-        ) {
-
-            const page =
-            await pdf.getPage(i);
-
-            const content =
-            await page.getTextContent();
-
-            const strings =
-            content.items.map(
-                item => item.str
-            );
-
-            text +=
-            strings.join(" ");
-        }
-
-        return text;
-
-    } catch (error) {
-
-        console.log(
-            "PDF EXTRACT ERROR : ",
-            error
-        );
-
+    if (text.length === 0) {
         throw new Error(
-            "Failed to extract PDF text"
+            `extractTextFromPDF: no text extracted from "${filePath}". ` +
+            "The PDF may be scanned (image-only) or password-protected."
         );
     }
+
+    console.log(
+        `[extractTextFromPDF] Extracted ${text.length} characters from "${filePath}".`
+    );
+
+    return text;
 };
 
-module.exports =
-extractTextFromPDF;
+module.exports = extractTextFromPDF;
