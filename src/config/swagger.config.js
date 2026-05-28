@@ -94,9 +94,9 @@ const options = {
 
     // ✅ FIX: use absolute paths so it works regardless of where node is run from
     apis: [
-    ("./modules/auth/auth.routes.js"),
-        ("./modules/document/document.routes.js"),
-        ("./modules/chat/chat.route.js"),
+    ("./src/modules/auth/auth.routes.js"),
+        ("./src/modules/document/document.routes.js"),
+        ("./src/modules/chat/chat.route.js"),
         
     ]
 };
